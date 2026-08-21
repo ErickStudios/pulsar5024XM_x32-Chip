@@ -5,11 +5,14 @@ import { argv, exit } from "node:process";
 import {LibraryAssembler as p3264asm } from "./AsmLibrary/StandardAssembler.js";
 import * as p64cc from "./AsmLibrary/Pulsar64CCompiler.js";
 import * as fileSystem from "node:fs";
+import {DisCode} from "./AsmLibrary/Dis64.js"
+
+let debug = false;
 
 let cContext = new p64cc.CtxTempExp();
 
 // Arguments
-let Arguments = ['--c','--asm'];
+let Arguments = ['--c','--asm', '--dis'];
 
 // ArgumentIndex
 let argsIndex = 2;
@@ -26,6 +29,12 @@ function Consume() {
 
 let ctx = {
     '--asm': {
+        active:     false,
+        inFiles:    [],
+        outFile:    'a.hex',
+        format:     'hex',
+    },
+    '--dis': {
         active:     false,
         inFiles:    [],
         outFile:    'a.hex',
@@ -63,6 +72,26 @@ function UnsiA() {
         cContext = new p64cc.CtxTempExp();
         fileSystem.writeFileSync(ctx[ctx.currentMode].outFile, asmGigantFile);
     }
+    else if (ctx.currentMode == '--dis') {
+        let asmGigantFile = "";
+        let ar = ctx[ctx.currentMode].inFiles;
+
+        asmGigantFile = Buffer.from(fileSystem.readFileSync(ar[0], 'ascii'), 'ascii') ;
+
+        let outpudFile = ctx["--dis"].outFile
+        let hex = ""
+        
+        if (ctx["--dis"].format === 'decimal' || ctx["--dis"].format === 'hex') {
+            let nums = asmGigantFile.toString().split(/\s+/).map(n => Number.parseInt(n, ctx["--dis"].format === 'decimal' ? 10 : 16));
+            hex = DisCode(nums);
+        }
+        else if (ctx["--dis"].format === 'flat') {
+            let nums = Array.from(Uint8Array.from(asmGigantFile))
+            hex = DisCode(nums);
+        }
+        
+        fileSystem.writeFileSync(outpudFile, hex);
+    }
     else if (ctx.currentMode == '--asm') {
         let asmGigantFile = "";
         let ar = ctx[ctx.currentMode].inFiles;
@@ -75,7 +104,8 @@ function UnsiA() {
         let resulta = p3264asm.asm.assembleCode(asmGigantFile);
         let result = resulta.result;
         let hex = result.map(b => b.toString(16).padStart(2, '0')).join('\n');
-        console.log(resulta.context)
+
+        if (debug) console.log(resulta.context)
 
         if (ctx["--asm"].format === 'decimal') {
             hex = result.map(b => b.toString()).join('\n');
@@ -107,6 +137,13 @@ function Check() {
         if (modeActive == '--c') {
             ctx['--c'].outFile = 'out.asm';
         }
+        else if (modeActive == '--dis') {
+            ctx["--dis"].format = "hex";
+        }
+    }
+    if (Peek() == "--dbg") {
+        Consume();
+        debug = true;
     }
     else if (ctx.currentMode === '--c') {
         if (Peek() === '-out') {
@@ -133,6 +170,22 @@ function Check() {
         else {
             let fd = Consume();
             ctx["--asm"].inFiles.push(fd);
+        }
+    }
+    else if (ctx.currentMode === '--dis') {
+        if (Peek() === '-out') {
+            Consume();
+            let ofa = Consume();
+            ctx["--dis"].outFile = ofa;
+        }
+        else if (Peek() === '-f') {
+            Consume();
+            let ofa = Consume();
+            ctx["--dis"].format = ofa;
+        }
+        else {
+            let fd = Consume();
+            ctx["--dis"].inFiles.push(fd);
         }
     }
 }

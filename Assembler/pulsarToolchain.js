@@ -2188,8 +2188,182 @@ function codeGen(pparsed) {
 
 // Assembler/Pulsar3264toolchain.js
 import * as fileSystem from "node:fs";
+
+// Assembler/AsmLibrary/Dis64.js
+function ReprModi(t, byte) {
+  if (t == 0) {
+    let registers = [
+      void 0,
+      void 0,
+      "sp",
+      "r0",
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "lnk",
+      "bp",
+      "ip",
+      "r7",
+      "r8",
+      "r9"
+    ];
+    if ((byte & 15) <= 15)
+      return registers[byte & 15];
+  }
+  if (t == 1) {
+    return `i(${byte.toString()})`;
+  }
+  if (t == 2) {
+    return byte.toString();
+  }
+  if (t == 3) {
+    if (byte >= 0 && byte <= 7)
+      return String.fromCharCode(byte + 97) + "s";
+  }
+}
+function EmitOpr(bytes) {
+  let oprInd = bytes[0] & 15;
+  let oprDex = [
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "and",
+    "or",
+    "shr",
+    "shl"
+  ];
+  if (oprInd >= oprDex.length) return;
+  let oprName = oprDex[oprInd];
+  let opr1T = bytes[1] >> 2 & 3;
+  let opr2T = bytes[1] & 3;
+  let oprDT = 0;
+  let oprD = bytes[1] >> 4 & 15;
+  let opr1 = bytes[2];
+  let opr2 = bytes[3];
+  let repr1 = ReprModi(oprDT, oprD);
+  if (!repr1) return;
+  let repr2 = ReprModi(opr1T, opr1);
+  if (!repr2) return;
+  let repr3 = ReprModi(opr2T, opr2);
+  if (!repr3) return;
+  return `${oprName} ${repr1}, ${repr2}, ${repr3}`;
+}
+function TryInmOprs(bytes) {
+  if (bytes[1] == 255) {
+    if (bytes[2] == 1) {
+      return `slcinm ${bytes[3]}`;
+    } else if (bytes[2] == 2) {
+      let repr1 = ReprModi(0, bytes[3]);
+      if (!repr1) return;
+      return `ltbl ${repr1}`;
+    } else if (bytes[2] == 3) {
+      return `int ${bytes[3]}`;
+    } else if ((bytes[2] & 240) == 48) {
+      let repr1 = ReprModi(bytes[3] >> 4 & 15, bytes[3] & 15);
+      if (!repr1) return;
+      return `gb ${bytes[2] & 15} ${repr1}`;
+    } else if (bytes[2] == 255) {
+      if (bytes[3] == 1) {
+        return `rstinm`;
+      } else if ((bytes[3] & 240) == 32) {
+        let repr1 = ReprModi(0, bytes[3] & 15);
+        if (!repr1) return;
+        return `calc ${repr1}`;
+      } else if (bytes[3] == 2) {
+        return `iret`;
+      } else if (bytes[3] == 3) {
+        return `hlt`;
+      }
+    }
+  } else if ((bytes[1] & 240) == 16) {
+    let inumba = bytes[1] & 15;
+    if (inumba == 2) {
+      return `addinmb2 ${bytes[2]}, ${bytes[3]}`;
+    } else if (inumba == 1) {
+      return `addinmb ${bytes[2]}`;
+    }
+  } else if ((bytes[1] & 240) == 64) {
+    let repr1 = ReprModi(0, bytes[2] & 15);
+    if (!repr1) return;
+    return `linm ${repr1}, ${bytes[3]}`;
+  } else if ((bytes[1] & 240) == 48) {
+    let repr1 = ReprModi((bytes[2] & 240) >> 4, bytes[2] & 15);
+    if (!repr1) return;
+    return `ifm${(bytes[1] & 15) * 8} ${repr1}, ${bytes[3]}`;
+  } else if (bytes[1] == 5) {
+    let repr1 = ReprModi(3, bytes[2]);
+    if (!repr1) return;
+    let repr2 = ReprModi(0, bytes[3] & 15);
+    if (!repr2) return;
+    return `srw ${repr1}, ${repr2}`;
+  } else if ((bytes[1] & 240) == 80) {
+    let repr1 = ReprModi(3, bytes[1] & 15);
+    if (!repr1) return;
+    let repr2 = ReprModi(0, bytes[2]);
+    if (!repr2) return;
+    let repr3 = ReprModi(0, bytes[3]);
+    if (!repr3) return;
+    return `srr ${repr1}:${repr2}, ${repr3}`;
+  }
+}
+function EmitDis(bytes) {
+  if ((bytes[0] & 240) == 32) {
+    return EmitOpr(bytes);
+  } else if (bytes[0] == 1) {
+    return TryInmOprs(bytes);
+  } else if (bytes[0] == 2) {
+    if ((bytes[1] & 240) == 16) {
+      let repr1 = ReprModi(0, bytes[1] & 15);
+      if (!repr1) return;
+      let repr2 = ReprModi(bytes[2] & 15, bytes[3]);
+      if (!repr2) return;
+      return `mwr${((bytes[2] & 240) >> 4) * 8} ${repr1}, ${repr2}`;
+    }
+  }
+}
+function DisCode(codeBytes) {
+  let codeComplA = [];
+  let count = 0;
+  const flushReserves = () => {
+    if (count > 0) {
+      codeComplA.push(`reserve ${count} ; 0x${index.toString(16)}`);
+      count = 0;
+    }
+  };
+  let index = 0;
+  while (index < codeBytes.length) {
+    if (index + 3 < codeBytes.length) {
+      const codeInstr = codeBytes.slice(index, index + 4);
+      const codeRepr = EmitDis(codeInstr);
+      if (codeRepr) {
+        flushReserves();
+        codeComplA.push(codeRepr + `; 0x${index.toString(16)}`);
+        index += 4;
+        continue;
+      }
+    }
+    let currentByte = codeBytes[index];
+    if (currentByte === 0) {
+      count++;
+      index++;
+    } else {
+      flushReserves();
+      codeComplA.println?.() || codeComplA.push(`db 0x${currentByte.toString(16).padStart(2, "0")} ; 0x${index.toString(16)}`);
+      index++;
+    }
+  }
+  flushReserves();
+  return codeComplA.join("\n");
+}
+
+// Assembler/Pulsar3264toolchain.js
+var debug = false;
 var cContext = new CtxTempExp();
-var Arguments = ["--c", "--asm"];
+var Arguments = ["--c", "--asm", "--dis"];
 var argsIndex = 2;
 function Peek() {
   return argv[argsIndex];
@@ -2199,6 +2373,12 @@ function Consume() {
 }
 var ctx = {
   "--asm": {
+    active: false,
+    inFiles: [],
+    outFile: "a.hex",
+    format: "hex"
+  },
+  "--dis": {
     active: false,
     inFiles: [],
     outFile: "a.hex",
@@ -2229,6 +2409,20 @@ function UnsiA() {
     });
     cContext = new CtxTempExp();
     fileSystem.writeFileSync(ctx[ctx.currentMode].outFile, asmGigantFile);
+  } else if (ctx.currentMode == "--dis") {
+    let asmGigantFile = "";
+    let ar = ctx[ctx.currentMode].inFiles;
+    asmGigantFile = Buffer.from(fileSystem.readFileSync(ar[0], "ascii"), "ascii");
+    let outpudFile = ctx["--dis"].outFile;
+    let hex = "";
+    if (ctx["--dis"].format === "decimal" || ctx["--dis"].format === "hex") {
+      let nums = asmGigantFile.toString().split(/\s+/).map((n) => Number.parseInt(n, ctx["--dis"].format === "decimal" ? 10 : 16));
+      hex = DisCode(nums);
+    } else if (ctx["--dis"].format === "flat") {
+      let nums = Array.from(Uint8Array.from(asmGigantFile));
+      hex = DisCode(nums);
+    }
+    fileSystem.writeFileSync(outpudFile, hex);
   } else if (ctx.currentMode == "--asm") {
     let asmGigantFile = "";
     let ar = ctx[ctx.currentMode].inFiles;
@@ -2239,7 +2433,7 @@ function UnsiA() {
     let resulta = LibraryAssembler.asm.assembleCode(asmGigantFile);
     let result = resulta.result;
     let hex = result.map((b) => b.toString(16).padStart(2, "0")).join("\n");
-    console.log(resulta.context);
+    if (debug) console.log(resulta.context);
     if (ctx["--asm"].format === "decimal") {
       hex = result.map((b) => b.toString()).join("\n");
     } else if (ctx["--asm"].format === "flat") {
@@ -2262,7 +2456,13 @@ function Check() {
     }
     if (modeActive == "--c") {
       ctx["--c"].outFile = "out.asm";
+    } else if (modeActive == "--dis") {
+      ctx["--dis"].format = "hex";
     }
+  }
+  if (Peek() == "--dbg") {
+    Consume();
+    debug = true;
   } else if (ctx.currentMode === "--c") {
     if (Peek() === "-out") {
       Consume();
@@ -2284,6 +2484,19 @@ function Check() {
     } else {
       let fd = Consume();
       ctx["--asm"].inFiles.push(fd);
+    }
+  } else if (ctx.currentMode === "--dis") {
+    if (Peek() === "-out") {
+      Consume();
+      let ofa = Consume();
+      ctx["--dis"].outFile = ofa;
+    } else if (Peek() === "-f") {
+      Consume();
+      let ofa = Consume();
+      ctx["--dis"].format = ofa;
+    } else {
+      let fd = Consume();
+      ctx["--dis"].inFiles.push(fd);
     }
   }
 }

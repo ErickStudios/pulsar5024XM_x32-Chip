@@ -24,6 +24,12 @@ identifiers:
     db          (goto_ident/20)
     db          (gosub_ident/20)
     db          (return_ident/20)
+    db          (clear_ident/20)
+    db          (rem_ident/20)
+    db          (append_ident/20)
+    db          (run_ident/20)
+    db          (clc_ident/20)
+
     db          0
 
     align       20
@@ -41,16 +47,36 @@ symbols:
     db          '/'
     db          0
 
-align 20 print_ident: 
+align 20 
+print_ident: 
     db 5,'print'
-align 20 input_ident: 
+align 20 
+input_ident: 
     db 5,'input'
-align 20 goto_ident: 
+align 20
+goto_ident: 
     db 4,'goto'
-align 20 gosub_ident: 
+align 20 
+gosub_ident: 
     db 5,'gosub'
-align 20 return_ident: 
+align 20 
+return_ident: 
     db 6,'return'
+align 20 
+clear_ident:
+    db 5,'clear'
+align 20
+append_ident:
+    db 3,'add'
+align 20
+rem_ident:
+    db 3,'rem'
+align 20
+run_ident:
+    db 3,'run'
+align 20
+clc_ident:
+    db 5,'erase'
 
     align 20
 vars:
@@ -64,14 +90,28 @@ basicsp: word 0
     align   8
 reserve 128 logicalstack:
 bufferline: reserve 128
-testcode:
-    db  'print 030 + 024',0
 tokens:     reserve (2*20)
 
 strtemp: db  0          ; count
 strtmpc: reserve 10     ; str content
 
+msg: db 'Welcome to BASINICA',10,10,'BASINICA is a BASIC',10,'for P64-LITE',10,0
+
 toki:       word 0
+
+put_str:
+    push    lnk
+put_str_loop:
+    mov     r1, [byte r0]
+    cmp     r2, r1, 0
+    jz      put_str_end
+    li32    r4, 10000h
+    mwr8    r4, r1
+    inc     r0
+    jmp     put_str_loop
+put_str_end:
+    pop     lnk
+    ret
 
 bootstrap:
     ; configure real stack
@@ -80,6 +120,9 @@ bootstrap:
     ; return basic sp
     li32    r0, retTOS
     bl      config_sp
+
+    li32    r0, msg
+    bl      put_str
 
 loopKy:
 	li32	r0, testcode
@@ -90,10 +133,13 @@ waitKey:
 	cmp    	r4, r3, 0
 	jz 		waitKey
 	mov		r4, 0
-	mov		r4, 0
 	mwr8	r2, r4
 	add 	r5, r0, r1
 	mwr8 	r5, r3
+    push    r0
+    li32    r0, 10000h
+    mwr8    r0, r3
+    pop     r0
 	inc		r1
 	cmp		r4, r3, 0Ah
 	jz 		parseLn
@@ -105,7 +151,7 @@ parseLn:
     ; preserve r0 for the param xD
     bl      runTok
 
-    hlt
+    jmp     loopKy
 
 config_sp:
     li32    r7, basicsp ; stack ptr addr
@@ -165,6 +211,7 @@ strcmploop:
     mov     r5, [byte r1]
     cmp     r4, r4, r5
     jz      stcmpne
+    mov     r9, 0
     jmp     strcmpend
 stcmpne:
     inc     r0
@@ -180,6 +227,9 @@ strcmpend:
     ret
 
 parse:
+    li32    r7, toki
+    mov     r8, 0
+    mwr16   r7, r8
     push    lnk
 loopp:
     pop     lnk
@@ -267,7 +317,10 @@ endIdentifier:
 tryIdentifyWhatIdentIs:
     li32    r6, identifiers
 loop50:
+    li32    r8, strtemp
     mov     r7, [byte r6]
+    cmp     r9, r7, 0
+    jz      skipSpace       ; no more
     mul     r7, r7, 20
     push    r7
     pusha
@@ -384,17 +437,121 @@ execIdent:
 
     mov     r4, r2 ; get ky
 
-	push 	r4
-    bl  	tryPlayNum2
-    pop 	r4
+    add     r9, 0, (clear_ident/20)
+	cmp     r3, r4, r9
+	jz      clearScreen
+
+    add     r9, 0, (rem_ident/20)
+	cmp     r3, r4, r9
+	jz      runTokLoop
+
+    add     r9, 0, (append_ident/20)
+	cmp     r3, r4, r9
+	jz      appendCode
+
     add     r9, 0, (print_ident/20)
 	cmp     r3, r4, r9
 	jz      printNumber
-	
+
+    add     r9, 0, (clc_ident/20)
+	cmp     r3, r4, r9
+	jz      earseLines
+
+    add     r9, 0, (run_ident/20)
+	cmp     r3, r4, r9
+	jz      runProg
+
 	jmp     runTokLoop
+runProg:
+    li32    r4, testrun
+    li32    r3, testrun_i
+    mov     r3, [word r3]
+    mov     r5, 0
+runProgl:
+    pusha
+    mul     r5, r5, 12
+    add     r0, r4, r5
+    bl      runPeek
+
+    push    r9
+    pusha
+    add     r9, 0, (goto_ident/20)
+	cmp     r3, r2, r9
+    popa
+    pop     r9
+	jz      gotoLine
+
+    push    lnk
+    bl      runTok
+    pop     lnk
+    popa
+finishRunLine:
+    mov     r6, r5
+    inc     r5
+    cmp     r2, r6, r3
+    jz      runProgEnd
+    jmp     runProgl
+runProgEnd:
+    jmp     runTokLoop
+gotoLine:
+    bl      runConsume
+    popa
+    push    r0
+    mul     r5, r5, 12
+    add     r0, r4, r5
+    add     r0, r0, 2
+    bl      runConsume
+    mov     r5, r2
+    pop     r0
+    jmp     runProgl
+
+appendCode:
+    li32    r9, testrun_i
+    li32    r8, testrun
+    mov     r6, [word r9]
+    mul     r6, r6, 12
+    add     r8, r8, r6
+    mov     r7, r0
+appendCodeLoop:
+    mov     r6, [word r7]
+    mwr16   r8, r6
+
+    mov     r1, [byte r0]
+    cmp     r2, r1, TYEOF
+    jz      appendCodeInc
+
+    add     r8, r8, 2
+    add     r0, r0, 2
+    add     r7, r7, 2
+    jmp     appendCodeLoop
+    jmp     runTokLoop
+appendCodeInc:
+    mov     r6, [word r9]
+    inc     r6
+    mwr16   r9, r6
+    jmp     runTokLoop
+clearScreen:
+   	li64    r8, 10001h
+    mov     r9, 0
+   	mwr8 	r8, r9
+    jmp     runTokLoop
+earseLines:
+    push    r7
+    push    r6
+    li32    r7, testrun_i
+    mov     r6, 0
+    mwr16   r7, r6
+    pop     r6
+    pop     r7
+    jmp     runTokLoop
+
 printNumber:
+	push 	r4
+    bl  	tryPlayNum2
+    pop 	r4
     push    r4
     push    r3
+    push    r7
     mov     r3, r7
     mov     r2, 0
 pnuCntDigits:
@@ -408,25 +565,33 @@ tenPotspnum:
     db      10
     db 		100
 endCntDi:
+    pop     r7
 	pop     r3
     pop     r4
 digitpnumll:
+    ; r7==30 =10p, r9:3, r4=3/10=0
     li16    r6, tenPotspnum
     add     r6, r6, r2
     mov     r6, [byte r6]
-    div     r6, r7, r6
-    div     r4, r6, 10
+    div     r9, r7, r6
+    div     r4, r9, 10
     mul     r4, r4, 10
-   	sub     r6, r6, r4
-   	add     r6, r6, '0'
+   	sub     r9, r9, r4
+   	add     r9, r9, '0'
    	li64    r8, 10000h
-   	mwr8 	r8, r6
+   	mwr8 	r8, r9
     cmp     r3, r2, 0
     dec     r2
     jz      pnumend
     jmp     digitpnumll
 pnumend:
-    hlt
+    push    r9
+    pusha
+    li32    r9, 10000h
+    mov     r3, 10
+    mwr8    r9, r3
+    popa
+    pop     r9
     jmp     runTokLoop
 runPeek:
     mov     r1, [byte r0+0] ; get type
@@ -438,5 +603,12 @@ runConsume:
     add     r0, r0, 2       ; next token
     pop     lnk
     ret
+
+testcode:
+    reserve 128
+testrun:
+    reserve ((6*2)*240) ; 240 MAX lines each have only tokens
+testrun_i:
+    dw 0
 
 align 10000h reserve 32

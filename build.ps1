@@ -3,8 +3,9 @@ npx esbuild "$PSScriptRoot/Assembler/Pulsar3264toolchain.js" --bundle --platform
 
 & "$PSScriptRoot/CpuSource/LinkCpu.ps1"
 
-& "$PSScriptRoot/TestsAndPcs/pulsar5024XM_x32/build.ps1"
-& "$PSScriptRoot/TestsAndPcs/64bitTest/build.ps1"
+#& "$PSScriptRoot/TestsAndPcs/pulsar5024XM_x32/build.ps1"
+#& "$PSScriptRoot/TestsAndPcs/64bitTest/build.ps1"
+& "$PSScriptRoot/TestsAndPcs/ExperimentsInPotato2020pad/Compile.ps1"
 
 node "$PSScriptRoot/Assembler/pulsarToolchain.js" `
     --asm                                        `
